@@ -32,7 +32,7 @@ cd AugPersist/qemu_mode/
 ### 2. locate the PBB of the target.
 `AugPersist/finder/findPBB /tmp/loop_trace /tmp/loop_trace1`
 <p align="center">
-  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AugPersist_fuzz_demo_svr_std.png" width="45%">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/findPBB_for_demo_svr_std.png" width="45%">
 </p>
 
 ### 3. fuzz the persistent target with the PBB (specified by -L parameter).
@@ -60,6 +60,12 @@ cd AugPersist/qemu_mode/
 
 ### 3. locate the PBB of the target.
 `AugPersist/finder/findPBB /tmp/loop_trace /tmp/loop_trace1`
+<p align="center">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/findPBB_for_demo_svr_net.png" width="45%">
+</p>
 
 ### 4. fuzz the persistent target with the PBB (specified by -L parameter).
 `AugPersist/afl-fuzz -i in/ -o out/ -p net -R reserve -L 0x4000000c89 -Q ./demo_svr_net`
+<p align="center">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AugPersist_fuzz_demo_svr_net.png" width="45%">
+</p>
