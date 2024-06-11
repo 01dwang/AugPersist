@@ -1,16 +1,16 @@
 # AugPersist
 
 ## prepare and compile
-### compile the afl-fuzz 
+### 1. compile the afl-fuzz 
 `make`
 
-### compile the afl-qemu-loop-trace for tracing the BBs when locating the PBB
+### 2. compile the afl-qemu-loop-trace for tracing the BBs when locating the PBB
 ```
 cd AugPersist/qemu_loop_mode/
 ./build_qemu_support.sh
 ```
 
-### compile the afl-qemu-trace for tracing the BBs when fuzzing the target
+### 3. compile the afl-qemu-trace for tracing the BBs when fuzzing the target
 ```
 cd AugPersist/qemu_mode/
 ./build_qemu_support.sh
@@ -18,7 +18,7 @@ cd AugPersist/qemu_mode/
 
 
 ## fuzz the persistent software by stdio
-### trace the BBs of the target.
+### 1. trace the BBs of the target.
 `cd AugPersist/demo`
 
 `touch /tmp/loop_trace`
@@ -29,18 +29,25 @@ cd AugPersist/qemu_mode/
 
 `AugPersist/afl-fuzz -i in/ -o out/ -P std -t 1800 -Q ./demo_svr_std`
 
-### locate the PBB of the target.
+### 2. locate the PBB of the target.
 `AugPersist/finder/findPBB /tmp/loop_trace /tmp/loop_trace1`
+<p align="center">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AugPersist_fuzz_demo_svr_std.png" width="45%">
+</p>
 
-### fuzz the persistent target with the PBB (specified by -L parameter).
+### 3. fuzz the persistent target with the PBB (specified by -L parameter).
 `AugPersist/afl-fuzz -i in/ -o out/ -p std -R reserve -L 0x400000095c -Q ./demo_svr_std`
+<p align="center">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AugPersist_fuzz_demo_svr_std.png" width="45%">
+</p>
+
 
 
 ## fuzz the persistent software by network socket
-### Modify send_net_packet() in afl-fuzz.c to fit the port and data format of the target network protocol
+### 1. Modify send_net_packet() in afl-fuzz.c to fit the port and data format of the target network protocol
 `...`
 
-### trace the BBs of the target.
+### 2. trace the BBs of the target.
 `cd AugPersist/demo`
 
 `touch /tmp/loop_trace`
@@ -51,8 +58,8 @@ cd AugPersist/qemu_mode/
 
 `AugPersist/afl-fuzz -i in/ -o out/ -P net -t 3000 -Q ./demo_svr_net`
 
-### locate the PBB of the target.
+### 3. locate the PBB of the target.
 `AugPersist/finder/findPBB /tmp/loop_trace /tmp/loop_trace1`
 
-### fuzz the persistent target with the PBB (specified by -L parameter).
+### 4. fuzz the persistent target with the PBB (specified by -L parameter).
 `AugPersist/afl-fuzz -i in/ -o out/ -p net -R reserve -L 0x4000000c89 -Q ./demo_svr_net`
