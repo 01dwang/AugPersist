@@ -49,7 +49,7 @@ AFL/afl-fuzz -i in/ -o out/ -Q ./demo_svr_std_patched_loop_and_init_for_AFL
 <p align="center">
   <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AFL_fuzz_demo_svr_std_patched1.png" width="45%">
 &nbsp; &nbsp; &nbsp; &nbsp;
-  <img alt="Dark" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AFL_fuzz_demo_svr_std_patched2.png" width="49%">
+  <img alt="Dark" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AFL_fuzz_demo_svr_std_patched2.png" width="47%">
 </p>
 
 
