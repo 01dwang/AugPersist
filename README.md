@@ -2,30 +2,24 @@
 
 
 ## find the loop start point of the loop demo server(by std)
-`cd loop_demo`
-
-`gcc -o demo_svr_std ./demo_svr_std.c`
+`cd demo`
 
 `touch /tmp/loop_trace`
 
-`~/AFL/afl-fuzz -i in/ -o out/ -P std -t 2000 -Q ./demo_svr_std`
+`~/AugPersist/afl-fuzz -i in/ -o out/ -P std -t 2000 -Q ./demo_svr_std`
 
 `cp /tmp/loop_trace /tmp/loop_trace1`
 
-`~/AFL/afl-fuzz -i in/ -o out/ -P std -t 1800 -Q ./demo_svr_std`
+`~/AugPersist/afl-fuzz -i in/ -o out/ -P std -t 1800 -Q ./demo_svr_std`
 
-`cd loop_finder`
+`cd finder`
 
-`g++ -o loop_finder ./loop_finder.cpp`
-
-`./loop_finder`
+`./findPBB`
 
 
 
 ## find the loop start point of the loop demo server(by net)
-`cd loop_demo`
-
-`gcc -o demo_svr_net ./demo_svr_net.c`
+`cd demo`
 
 `touch /tmp/loop_trace`
 
@@ -35,11 +29,9 @@
 
 `~/AFL/afl-fuzz -i in/ -o out/ -P net -t 3000 -Q ./demo_svr_net`
 
-`cd loop_finder`
+`cd finder`
 
-`g++ -o loop_finder ./loop_finder.cpp`
-
-`./loop_finder`
+`./findPBB`
 
 
 ## fuzz the the loop demo server (break the loop logic)
