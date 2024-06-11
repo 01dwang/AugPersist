@@ -41,6 +41,12 @@ cd AugPersist/qemu_mode/
   <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AugPersist_fuzz_demo_svr_std.png" width="45%">
 </p>
 
+### 4. Compare with the fuzzing results of pure AFL for A and B
+<p align="center">
+  <img alt="Light" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AFL_fuzz_demo_svr_std_patched1.png" width="45%">
+&nbsp; &nbsp; &nbsp; &nbsp;
+  <img alt="Dark" src="https://github.com/01dwang/AugPersist/blob/master/screenshots/AFL_fuzz_demo_svr_std_patched2.png" width="45%">
+</p>
 
 
 ## fuzz the persistent software by network socket
