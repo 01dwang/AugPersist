@@ -4186,9 +4186,18 @@ static void show_stats(void) {
   banner_pad = (80 - banner_len) / 2;
   memset(tmp, ' ', banner_pad);
 
-  sprintf(tmp + banner_pad, "%s " cLCY VERSION cLGN
+  if (interactive_mode == 1)
+  {
+    sprintf(tmp + banner_pad, "%s " cLCY "std" cLGN
           " (%s)",  crash_mode ? cPIN "peruvian were-rabbit" : 
-          cYEL "american fuzzy lop", use_banner);
+          cYEL "AugPersist", use_banner);
+  }
+  else
+  {
+    sprintf(tmp + banner_pad, "%s " cLCY "net" cLGN
+          " (%s)",  crash_mode ? cPIN "peruvian were-rabbit" : 
+          cYEL "AugPersist", use_banner);
+  }
 
   SAYF("\n%s\n\n", tmp);
 
