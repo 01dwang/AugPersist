@@ -53,8 +53,12 @@
    _start and does the usual forkserver stuff, not very different from
    regular instrumentation injected via afl-as.h. */
 
+/* WANG ADD */
 #define AFL_QEMU_CPU_SNIPPET2 do { \
-    if(itb->pc == afl_entry_point) { \
+    if(!has_init && itb->pc == afl_entry_point) { \
+      myinit_setup(); \
+    } \
+    if(!has_setup && itb->pc == loop_start_point) { \
       afl_setup(); \
       afl_forkserver(cpu); \
     } \
@@ -69,12 +73,20 @@
 /* This is equivalent to afl-as.h: */
 
 static unsigned char *afl_area_ptr;
+/* WANG ADD */
+int has_init;
+int has_setup;
+int reach_twice;
+int runtime_mode; //break loop or reserve loop
+char syn_buf[4];
 
 /* Exported variables populated by the code patched into elfload.c: */
 
-abi_ulong afl_entry_point, /* ELF entry point (_start) */
-          afl_start_code,  /* .text start pointer      */
-          afl_end_code;    /* .text end pointer        */
+abi_ulong afl_entry_point,  /* ELF entry point (_start) */
+          afl_start_code,   /* .text start pointer      */
+          afl_end_code,     /* .text end pointer        */
+          /* WANG ADD */
+          loop_start_point; /* The target loop server's loop start point */
 
 /* Set in the child process in forkserver mode: */
 
@@ -111,9 +123,28 @@ static inline TranslationBlock *tb_find(CPUState*, TranslationBlock*, int);
  * ACTUAL IMPLEMENTATION *
  *************************/
 
+/* WANG ADD */
+static void myinit_setup(void) {
+
+  has_init = 1;
+
+  char *loop_point_buf = getenv("LOOP_STAR_POINT");
+  loop_start_point = (abi_ulong)strtoull(loop_point_buf, NULL, 16);
+
+  char *runtime_buf = getenv("RUNTIME_MODE");
+  if (!strcmp(runtime_buf, "reserve")) {
+    runtime_mode = 1; //reserve
+  }
+  else
+    runtime_mode = 0; //breakit
+}
+
+
 /* Set up SHM region and initialize other stuff. */
 
 static void afl_setup(void) {
+
+  has_setup = 1;
 
   char *id_str = getenv(SHM_ENV_VAR),
        *inst_r = getenv("AFL_INST_RATIO");
@@ -196,6 +227,9 @@ static void afl_forkserver(CPUState *cpu) {
     if (pipe(t_fd) || dup2(t_fd[1], TSL_FD) < 0) exit(3);
     close(t_fd[1]);
 
+    /* WANG ADD */
+    reach_twice = 0;
+
     child_pid = fork();
     if (child_pid < 0) exit(4);
 
@@ -204,8 +238,8 @@ static void afl_forkserver(CPUState *cpu) {
       /* Child process. Close descriptors and run free. */
 
       afl_fork_child = 1;
-      close(FORKSRV_FD);
-      close(FORKSRV_FD + 1);
+      // close(FORKSRV_FD);
+      // close(FORKSRV_FD + 1);
       close(t_fd[0]);
       return;
 
@@ -243,6 +277,31 @@ static inline void afl_maybe_log(abi_ulong cur_loc) {
   if (cur_loc > afl_end_code || cur_loc < afl_start_code || !afl_area_ptr)
     return;
 
+  /* WANG ADD */
+  if (cur_loc == loop_start_point)
+  {
+    /* When the target reaches the loop start point for the first time, 
+    we will pass it to deal with one packet. */
+    if(!reach_twice)
+      reach_twice = 1;
+    
+    else {
+      /* When the target reaches the loop start point for the second time, 
+      we will kill the target. Then the forkserver will fork new target. */
+      if (!runtime_mode)
+        exit(0);
+
+      /* When the target reaches the point second time, the target
+      can directly write the status to the fuzzer. And make the fuzzer 
+      send other packets. */
+      else {
+        if (write(FORKSRV_FD + 1, "LOOP", 4) != 4) exit(0);
+        if (read(FORKSRV_FD, syn_buf, 4) != 4) exit(0);
+      }
+      
+    }
+  }
+  
   /* Looks like QEMU always maps to fixed locations, so ASAN is not a
      concern. Phew. But instruction addresses may be aligned. Let's mangle
      the value to get something quasi-uniform. */

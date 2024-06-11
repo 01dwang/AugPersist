@@ -67,6 +67,10 @@
 #include <sys/ioctl.h>
 #include <sys/file.h>
 
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
 #  include <sys/sysctl.h>
 #endif /* __APPLE__ || __FreeBSD__ || __OpenBSD__ */
@@ -100,7 +104,10 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *in_bitmap,                 /* Input bitmap                     */
           *doc_path,                  /* Path to documentation dir        */
           *target_path,               /* Path to target binary            */
-          *orig_cmdline;              /* Original command line            */
+          *orig_cmdline,              /* Original command line            */
+          /* WANG ADD */
+          *loop_start_point,          /* The target's loop start point    */
+          *runtime_mode_buf;          /* Reserve the loop or break it     */
 
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
@@ -136,7 +143,12 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            run_over10m,               /* Run time over 10 minutes?        */
            persistent_mode,           /* Running in persistent mode?      */
            deferred_mode,             /* Deferred forkserver mode?        */
-           fast_cal;                  /* Try to calibrate faster?         */
+           fast_cal,                  /* Try to calibrate faster?         */
+           /* WANG ADD */
+           LOOP_mode,                 /* Find the Loop point mode */ 
+           interactive_mode,          /* Interactive by stdin or network  */
+           runtime_mode;              /* Reserve the loop or break it     */
+           
 
 static s32 out_fd,                    /* Persistent fd for out_file       */
            dev_urandom_fd = -1,       /* Persistent fd for /dev/urandom   */
@@ -1488,7 +1500,7 @@ static void read_testcases(void) {
 
     /* This also takes care of . and .. */
 
-    if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn, "/README.testcases")) {
+    if (!S_ISREG(st.st_mode) || !st.st_size || strstr(fn, "/README.txt")) {
 
       ck_free(fn);
       ck_free(dfn);
@@ -2284,6 +2296,59 @@ EXP_ST void init_forkserver(char** argv) {
 }
 
 
+/* WANG ADD */
+/*** The interaction of packets needs to be implemented by yourself ***/
+static void send_net_packet()
+{
+  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0)
+    FATAL("Socket failed");
+
+  struct timeval mytime;
+  mytime.tv_sec = 0;
+  mytime.tv_usec = 10000;
+  setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&mytime, sizeof(mytime));
+
+  struct sockaddr_in seraddr;
+  memset(&seraddr, 0, sizeof(seraddr));
+  seraddr.sin_family = AF_INET;
+  seraddr.sin_port = htons(2222);
+  seraddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+  int n;
+  for (n = 0; n < 3; n++) { //retry connect three times
+    if (connect(sockfd, (struct sockaddr *)&seraddr, sizeof(seraddr)) == 0) 
+      break;
+    // printf("%s: %s\n", "Connect error", strerror(errno));
+    ACTF("Reconncet the target loop server.");
+    // usleep(500*1000);
+    sleep(1);
+  }
+  if (n == 3)
+    FATAL("Connect the target loop server failed.");
+
+  char buf[1024] = {0};
+  int fd = out_fd; //.cur_input
+  if (fd < 0)
+    FATAL("Open failed");
+  lseek(fd, 0, SEEK_SET);
+
+  char tmp[1024] = {0};
+  read(sockfd, tmp, 7);
+  // puts(tmp);
+
+  while (1) {
+    int num = read(fd, buf, 1024);
+    write(sockfd, (void*)buf, num);
+    if (num != 1024 ) {
+      break;
+    }
+  }
+
+  close(sockfd);
+}
+
+
 /* Execute target application, monitoring for timeouts. Return status
    information. The called program will update trace_bits[]. */
 
@@ -2293,6 +2358,7 @@ static u8 run_target(char** argv, u32 timeout) {
   static u32 prev_timed_out = 0;
   static u64 exec_ms = 0;
 
+  int in_normal_loop = 0;
   int status = 0;
   u32 tb4;
 
@@ -2388,28 +2454,64 @@ static u8 run_target(char** argv, u32 timeout) {
     }
 
   } else {
+    /* WANG ADD */
+    if (runtime_mode) //reserve loop
+    {
+      // printf("[-] %d\n", child_pid);
+      s32 res;
 
-    s32 res;
+      /* if the child_pid>0, it indicates that the target is still alive.
+      The fuzzer does not have to communicate with the forkserver. */
+      if (child_pid <= 0) {
 
-    /* In non-dumb mode, we have the fork server up and running, so simply
-       tell it to have at it, and then read back PID. */
+        /* In non-dumb mode, we have the fork server up and running, so simply
+           tell it to have at it, and then read back PID. */
 
-    if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
+        if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
 
-      if (stop_soon) return 0;
-      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+          if (stop_soon) return 0;
+          RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+        }
+
+        if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+
+          if (stop_soon) return 0;
+          RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+        }
+
+        if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
+      }
+      else {
+        if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4)
+          RPFATAL(res, "Unable to request the target loop server (OOM?)");
+      }
 
     }
+    else //break loop
+    {
+      s32 res;
 
-    if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+      /* In non-dumb mode, we have the fork server up and running, so simply
+         tell it to have at it, and then read back PID. */
 
-      if (stop_soon) return 0;
-      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+      if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
 
+        if (stop_soon) return 0;
+        RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+      }
+
+      if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+
+        if (stop_soon) return 0;
+        RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+      }
+
+      if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
     }
-
-    if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
-
   }
 
   /* Configure timeout, as requested by user, then wait for child to terminate. */
@@ -2418,6 +2520,10 @@ static u8 run_target(char** argv, u32 timeout) {
   it.it_value.tv_usec = (timeout % 1000) * 1000;
 
   setitimer(ITIMER_REAL, &it, NULL);
+
+  /* WANG ADD */
+  if (interactive_mode == 2)
+    send_net_packet();
 
   /* The SIGALRM handler simply kills the child_pid and sets child_timed_out. */
 
@@ -2433,12 +2539,31 @@ static u8 run_target(char** argv, u32 timeout) {
 
       if (stop_soon) return 0;
       RPFATAL(res, "Unable to communicate with fork server (OOM?)");
-
     }
+
+    /* WANG ADD */
+    /* If the target tell the fuzzer "LOOP", it indicates the target run normally.
+    We should reserve the child_pid for fuzzer. */
+    if (runtime_mode) //reserve loop
+    {
+      if ( !memcmp((char*)&status, "LOOP", 4) ) 
+        in_normal_loop = 1; //the target is looping normally
+      else {
+        in_normal_loop = 0; //the target is crash
+        child_pid = 0;
+      }
+    }
+    else //break loop
+      in_normal_loop = 0;
+    
 
   }
 
-  if (!WIFSTOPPED(status)) child_pid = 0;
+  /* WANG ADD */
+  if (!in_normal_loop) {
+    if (!WIFSTOPPED(status)) child_pid = 0;
+  }
+  
 
   getitimer(ITIMER_REAL, &it);
   exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +
@@ -2467,28 +2592,34 @@ static u8 run_target(char** argv, u32 timeout) {
 
   prev_timed_out = child_timed_out;
 
-  /* Report outcome to caller. */
+  /* WANG ADD */
+  if (!in_normal_loop) {
+    /* Report outcome to caller. */
 
-  if (WIFSIGNALED(status) && !stop_soon) {
+    if (WIFSIGNALED(status) && !stop_soon) {
 
-    kill_signal = WTERMSIG(status);
+      kill_signal = WTERMSIG(status);
 
-    if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
+      if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
 
-    return FAULT_CRASH;
+      return FAULT_CRASH;
 
+    }
   }
 
-  /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and
-     must use a special exit code. */
+  /* WANG ADD */
+  if (!in_normal_loop) {
+    /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and
+       must use a special exit code. */
 
-  if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {
-    kill_signal = 0;
-    return FAULT_CRASH;
+    if (uses_asan && WEXITSTATUS(status) == MSAN_ERROR) {
+      kill_signal = 0;
+      return FAULT_CRASH;
+    }
+
+    if ((dumb_mode == 1 || no_forkserver) && tb4 == EXEC_FAIL_SIG)
+      return FAULT_ERROR;
   }
-
-  if ((dumb_mode == 1 || no_forkserver) && tb4 == EXEC_FAIL_SIG)
-    return FAULT_ERROR;
 
   /* It makes sense to account for the slowest units only if the testcase was run
   under the user defined timeout. */
@@ -7742,6 +7873,77 @@ static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
 
 }
 
+/* WANG ADD */
+static char** get_qemu_loop_argv(u8* own_loc, char** argv, int argc) {
+
+  char** new_argv = ck_alloc(sizeof(char*) * (argc + 4));
+  u8 *tmp, *cp, *rsl, *own_copy;
+
+  /* Workaround for a QEMU stability glitch. */
+
+  setenv("QEMU_LOG", "nochain", 1);
+
+  memcpy(new_argv + 3, argv + 1, sizeof(char*) * argc);
+
+  new_argv[2] = target_path;
+  new_argv[1] = "--";
+
+  /* Now we need to actually find the QEMU binary to put in argv[0]. */
+
+  tmp = getenv("AFL_PATH");
+
+  if (tmp) {
+
+    cp = alloc_printf("%s/afl-qemu-loop-trace", tmp);
+
+    if (access(cp, X_OK))
+      FATAL("Unable to find '%s'", tmp);
+
+    target_path = new_argv[0] = cp;
+    return new_argv;
+
+  }
+
+  own_copy = ck_strdup(own_loc);
+  rsl = strrchr(own_copy, '/');
+
+  if (rsl) {
+
+    *rsl = 0;
+
+    cp = alloc_printf("%s/afl-qemu-loop-trace", own_copy);
+    ck_free(own_copy);
+
+    if (!access(cp, X_OK)) {
+
+      target_path = new_argv[0] = cp;
+      return new_argv;
+
+    }
+
+  } else ck_free(own_copy);
+
+  if (!access(BIN_PATH "/afl-qemu-loop-trace", X_OK)) {
+
+    target_path = new_argv[0] = ck_strdup(BIN_PATH "/afl-qemu-loop-trace");
+    return new_argv;
+
+  }
+
+  SAYF("\n" cLRD "[-] " cRST
+       "Oops, unable to find the 'afl-qemu-loop-trace' binary. The binary must be built\n"
+       "    separately by following the instructions in qemu_loop_mode/README.qemu. If you\n"
+       "    already have the binary installed, you may need to specify AFL_PATH in the\n"
+       "    environment.\n\n"
+
+       "    Of course, even without QEMU, afl-fuzz can still work with binaries that are\n"
+       "    instrumented at compile time with afl-gcc. It is also possible to use it as a\n"
+       "    traditional \"dumb\" fuzzer by specifying '-n' in the command line.\n");
+
+  FATAL("Failed to locate 'afl-qemu-loop-trace'.");
+
+}
+
 
 /* Make a copy of the current command line. */
 
@@ -7773,8 +7975,293 @@ static void save_cmdline(u32 argc, char** argv) {
 
 #ifndef AFL_LIB
 
-/* Main entry point */
 
+/* WANG ADD */
+static u8 run_target_by_std(char** argv, u32 timeout) {
+
+  static struct itimerval it;
+  static u32 prev_timed_out = 0;
+  static u64 exec_ms = 0;
+
+  int status = 0;
+
+  child_timed_out = 0;
+
+  s32 res;
+  /* In non-dumb mode, we have the fork server up and running, so simply
+     tell it to have at it, and then read back PID. */
+
+  if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+
+  if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+
+  if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
+
+
+  /* Configure timeout, as requested by user, then wait for child to terminate. */
+
+  it.it_value.tv_sec = (timeout / 1000);
+  it.it_value.tv_usec = (timeout % 1000) * 1000;
+
+  setitimer(ITIMER_REAL, &it, NULL);
+
+  /* The SIGALRM handler simply kills the child_pid and sets child_timed_out. */
+  if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to communicate with fork server (OOM?)");
+
+  }
+
+
+  if (!WIFSTOPPED(status)) child_pid = 0;
+
+  getitimer(ITIMER_REAL, &it);
+  exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +
+                             it.it_value.tv_usec / 1000);
+
+  char exec_ms_buf[0x20];
+  sprintf(exec_ms_buf, "[-] exec_ms: %llu", exec_ms);
+  puts(exec_ms_buf);
+
+  it.it_value.tv_sec = 0;
+  it.it_value.tv_usec = 0;
+
+  setitimer(ITIMER_REAL, &it, NULL);
+
+  total_execs++;
+
+  prev_timed_out = child_timed_out;
+
+  /* Report outcome to caller. */
+
+  if (WIFSIGNALED(status) && !stop_soon) {
+
+    kill_signal = WTERMSIG(status);
+
+    if (child_timed_out && kill_signal == SIGKILL) 
+      return FAULT_TMOUT;
+
+    return FAULT_CRASH;
+
+  }
+
+  return FAULT_NONE;
+}
+
+
+/* WANG ADD */
+static u8 run_target_by_net(char** argv, u32 timeout) {
+
+  static struct itimerval it;
+  static u32 prev_timed_out = 0;
+  static u64 exec_ms = 0;
+
+  int status = 0;
+
+  child_timed_out = 0;
+
+  s32 res;
+  /* In non-dumb mode, we have the fork server up and running, so simply
+     tell it to have at it, and then read back PID. */
+
+  if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+
+  if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to request new process from fork server (OOM?)");
+
+  }
+
+  if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
+
+
+  /* Configure timeout, as requested by user, then wait for child to terminate. */
+
+  it.it_value.tv_sec = (timeout / 1000);
+  it.it_value.tv_usec = (timeout % 1000) * 1000;
+
+  setitimer(ITIMER_REAL, &it, NULL);
+
+  /*** The interaction of packets needs to be implemented by yourself ***/
+  /*####################################################################*/
+  for (int i = 0; i < 5; i++) //packets num
+  {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
+      FATAL("Socket failed");
+
+    struct timeval mytime;
+    mytime.tv_sec = 0;
+    mytime.tv_usec = 10000;
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&mytime, sizeof(mytime));
+
+    struct sockaddr_in seraddr;
+    memset(&seraddr, 0, sizeof(seraddr));
+    seraddr.sin_family = AF_INET;
+    seraddr.sin_port = htons(2222);
+    seraddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    int n;
+    for (n = 0; n < 3; n++) { //retry connect three times
+      if (connect(sockfd, (struct sockaddr *)&seraddr, sizeof(seraddr)) == 0) 
+        break;
+      // printf("%s: %s\n", "Connect error", strerror(errno));
+      ACTF("Reconncet the target loop server.");
+      sleep(1);
+    }
+    if (n == 3)
+      FATAL("Connect the target loop server failed.");
+
+    char buf[1024] = {0};
+    int fd = out_fd; //.cur_input
+    if (fd < 0)
+      FATAL("Open failed");
+    lseek(fd, 0, SEEK_SET);
+
+    char tmp[1024] = {0};
+    read(sockfd, tmp, 7);
+    // puts(tmp);
+
+    while (1) {
+      int num = read(fd, buf, 1024);
+      write(sockfd, (void*)buf, num);
+      if (num != 1024 ) {
+        break;
+      }
+    }
+
+    // close(fd);
+    close(sockfd);
+
+    OKF("Send one packet to the target loop server.");
+
+  }
+  /*####################################################################*/
+
+
+  /* The SIGALRM handler simply kills the child_pid and sets child_timed_out. */
+  if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
+
+    if (stop_soon) return 0;
+    RPFATAL(res, "Unable to communicate with fork server (OOM?)");
+
+  }
+
+
+  if (!WIFSTOPPED(status)) child_pid = 0;
+
+  getitimer(ITIMER_REAL, &it);
+  exec_ms = (u64) timeout - (it.it_value.tv_sec * 1000 +
+                             it.it_value.tv_usec / 1000);
+  char exec_ms_buf[0x20];
+  sprintf(exec_ms_buf, "[-] exec_ms: %llums", exec_ms);
+  puts(exec_ms_buf);
+
+  it.it_value.tv_sec = 0;
+  it.it_value.tv_usec = 0;
+
+  setitimer(ITIMER_REAL, &it, NULL);
+
+  total_execs++;
+
+  prev_timed_out = child_timed_out;
+
+  /* Report outcome to caller. */
+
+  if (WIFSIGNALED(status) && !stop_soon) {
+
+    kill_signal = WTERMSIG(status);
+
+    if (child_timed_out && kill_signal == SIGKILL) 
+      return FAULT_TMOUT;
+
+    return FAULT_CRASH;
+
+  }
+
+  return FAULT_NONE;
+}
+
+
+
+/* WANG ADD */
+static u8 run_case_repeatedly(char** argv, struct queue_entry* q, u8* use_mem,
+                         u32 handicap, u8 from_queue) {
+
+  u8  fault = 0;
+  u32 use_tmout = exec_tmout;
+
+  if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
+    init_forkserver(argv);
+
+  write_to_testcase(use_mem, q->len);
+
+  if (interactive_mode == 1)
+    fault = run_target_by_std(argv, use_tmout);
+  else if (interactive_mode == 2)
+    fault = run_target_by_net(argv, use_tmout);
+
+  return fault;
+}
+
+
+
+/* WANG ADD */
+/* Run the same testcase repeatedly for the binary(server). 
+Then find the loop start point for the bianry. */
+static void find_loop_run(char** argv)
+{
+  struct queue_entry* q = queue;
+
+  while (q) {
+
+    u8* use_mem;
+    u8  res;
+    s32 fd;
+
+    u8* fn = strrchr(q->fname, '/') + 1;
+
+    ACTF("Attempting find loop start point with '%s'...", fn);
+
+    fd = open(q->fname, O_RDONLY);
+    if (fd < 0) PFATAL("Unable to open '%s'", q->fname);
+
+    use_mem = ck_alloc_nozero(q->len);
+
+    if (read(fd, use_mem, q->len) != q->len)
+      FATAL("Short read from '%s'", q->fname);
+
+    close(fd);
+
+    res = run_case_repeatedly(argv, q, use_mem, 0, 1);
+    ck_free(use_mem);
+
+    q = q->next;
+  }
+
+  OKF("All test cases processed.");
+}
+
+
+
+/* Main entry point */
 int main(int argc, char** argv) {
 
   s32 opt;
@@ -7795,7 +8282,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnCB:S:M:x:QV")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:P:p:L:R:f:m:b:t:T:dnCB:S:M:x:QV")) > 0)
 
     switch (opt) {
 
@@ -7812,6 +8299,31 @@ int main(int argc, char** argv) {
 
         if (out_dir) FATAL("Multiple -o options not supported");
         out_dir = optarg;
+        break;
+
+      /* WANG ADD */
+      case 'P':
+        if (LOOP_mode) FATAL("Multiple -P options not supported");
+        LOOP_mode = 1;
+        if (strlen(optarg) != 3 || optarg[0] == '-') FATAL("Bad syntax used for -P");
+        if (!strcmp(optarg, "std")) interactive_mode = 1;
+        if (!strcmp(optarg, "net")) interactive_mode = 2;
+        if (interactive_mode == 0) FATAL("Bad syntax used for -P");
+        break;
+      case 'p':
+        if (interactive_mode) FATAL("Multiple -p options not supported");
+        if (strlen(optarg) != 3 || optarg[0] == '-') FATAL("Bad syntax used for -p");
+        if (!strcmp(optarg, "std")) interactive_mode = 1;
+        if (!strcmp(optarg, "net")) interactive_mode = 2;
+        if (interactive_mode == 0) FATAL("Bad syntax used for -p");
+        break;
+      case 'L':
+        if (loop_start_point) FATAL("Multiple -L options not supported");
+        loop_start_point = ck_strdup(optarg);
+        break;
+      case 'R':
+        if (runtime_mode_buf) FATAL("Multiple -R options not supported");
+        runtime_mode_buf = ck_strdup(optarg);
         break;
 
       case 'M': { /* master sync ID */
@@ -8062,10 +8574,34 @@ int main(int argc, char** argv) {
 
   start_time = get_cur_time();
 
+  /* WANG ADD */
   if (qemu_mode)
-    use_argv = get_qemu_argv(argv[0], argv + optind, argc - optind);
+    if (LOOP_mode)
+      use_argv = get_qemu_loop_argv(argv[0], argv + optind, argc - optind);
+    else
+      use_argv = get_qemu_argv(argv[0], argv + optind, argc - optind);
   else
     use_argv = argv + optind;
+
+  /* WANG ADD */
+  if (LOOP_mode) {
+    find_loop_run(use_argv);
+    exit(0);
+  }
+
+  /* WANG ADD */
+  if (loop_start_point)
+    setenv("LOOP_STAR_POINT", loop_start_point, 1);
+  /* WANG ADD */
+  if (runtime_mode_buf) {
+    setenv("RUNTIME_MODE", runtime_mode_buf, 1);
+    if (!strcmp(runtime_mode_buf, "reserve")) {
+      runtime_mode = 1; //reserve
+    }
+    else
+      runtime_mode = 0; //breakit
+  }
+  
 
   perform_dry_run(use_argv);
 
