@@ -53,7 +53,7 @@
    _start and does the usual forkserver stuff, not very different from
    regular instrumentation injected via afl-as.h. */
 
-/* WANG ADD */
+/* AugPersist ADD */
 #define AFL_QEMU_CPU_SNIPPET2 do { \
     if(!has_init && itb->pc == afl_entry_point) { \
       myinit_setup(); \
@@ -73,7 +73,7 @@
 /* This is equivalent to afl-as.h: */
 
 static unsigned char *afl_area_ptr;
-/* WANG ADD */
+/* AugPersist ADD */
 int has_init;
 int has_setup;
 int reach_twice;
@@ -85,7 +85,7 @@ char syn_buf[4];
 abi_ulong afl_entry_point,  /* ELF entry point (_start) */
           afl_start_code,   /* .text start pointer      */
           afl_end_code,     /* .text end pointer        */
-          /* WANG ADD */
+          /* AugPersist ADD */
           loop_start_point; /* The target loop server's loop start point */
 
 /* Set in the child process in forkserver mode: */
@@ -123,7 +123,7 @@ static inline TranslationBlock *tb_find(CPUState*, TranslationBlock*, int);
  * ACTUAL IMPLEMENTATION *
  *************************/
 
-/* WANG ADD */
+/* AugPersist ADD */
 static void myinit_setup(void) {
 
   has_init = 1;
@@ -227,7 +227,7 @@ static void afl_forkserver(CPUState *cpu) {
     if (pipe(t_fd) || dup2(t_fd[1], TSL_FD) < 0) exit(3);
     close(t_fd[1]);
 
-    /* WANG ADD */
+    /* AugPersist ADD */
     reach_twice = 0;
 
     child_pid = fork();
@@ -277,7 +277,7 @@ static inline void afl_maybe_log(abi_ulong cur_loc) {
   if (cur_loc > afl_end_code || cur_loc < afl_start_code || !afl_area_ptr)
     return;
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (cur_loc == loop_start_point)
   {
     /* When the target reaches the loop start point for the first time, 

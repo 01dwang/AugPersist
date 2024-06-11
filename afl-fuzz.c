@@ -105,7 +105,7 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *doc_path,                  /* Path to documentation dir        */
           *target_path,               /* Path to target binary            */
           *orig_cmdline,              /* Original command line            */
-          /* WANG ADD */
+          /* AugPersist ADD */
           *loop_start_point,          /* The target's loop start point    */
           *runtime_mode_buf;          /* Reserve the loop or break it     */
 
@@ -144,7 +144,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            persistent_mode,           /* Running in persistent mode?      */
            deferred_mode,             /* Deferred forkserver mode?        */
            fast_cal,                  /* Try to calibrate faster?         */
-           /* WANG ADD */
+           /* AugPersist ADD */
            LOOP_mode,                 /* Find the Loop point mode */ 
            interactive_mode,          /* Interactive by stdin or network  */
            runtime_mode;              /* Reserve the loop or break it     */
@@ -2296,7 +2296,7 @@ EXP_ST void init_forkserver(char** argv) {
 }
 
 
-/* WANG ADD */
+/* AugPersist ADD */
 /*** The interaction of packets needs to be implemented by yourself ***/
 static void send_net_packet()
 {
@@ -2454,7 +2454,7 @@ static u8 run_target(char** argv, u32 timeout) {
     }
 
   } else {
-    /* WANG ADD */
+    /* AugPersist ADD */
     if (runtime_mode) //reserve loop
     {
       // printf("[-] %d\n", child_pid);
@@ -2521,7 +2521,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
   setitimer(ITIMER_REAL, &it, NULL);
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (interactive_mode == 2)
     send_net_packet();
 
@@ -2541,7 +2541,7 @@ static u8 run_target(char** argv, u32 timeout) {
       RPFATAL(res, "Unable to communicate with fork server (OOM?)");
     }
 
-    /* WANG ADD */
+    /* AugPersist ADD */
     /* If the target tell the fuzzer "LOOP", it indicates the target run normally.
     We should reserve the child_pid for fuzzer. */
     if (runtime_mode) //reserve loop
@@ -2559,7 +2559,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
   }
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (!in_normal_loop) {
     if (!WIFSTOPPED(status)) child_pid = 0;
   }
@@ -2592,7 +2592,7 @@ static u8 run_target(char** argv, u32 timeout) {
 
   prev_timed_out = child_timed_out;
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (!in_normal_loop) {
     /* Report outcome to caller. */
 
@@ -2607,7 +2607,7 @@ static u8 run_target(char** argv, u32 timeout) {
     }
   }
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (!in_normal_loop) {
     /* A somewhat nasty hack for MSAN, which doesn't support abort_on_error and
        must use a special exit code. */
@@ -7873,7 +7873,7 @@ static char** get_qemu_argv(u8* own_loc, char** argv, int argc) {
 
 }
 
-/* WANG ADD */
+/* AugPersist ADD */
 static char** get_qemu_loop_argv(u8* own_loc, char** argv, int argc) {
 
   char** new_argv = ck_alloc(sizeof(char*) * (argc + 4));
@@ -7976,7 +7976,7 @@ static void save_cmdline(u32 argc, char** argv) {
 #ifndef AFL_LIB
 
 
-/* WANG ADD */
+/* AugPersist ADD */
 static u8 run_target_by_std(char** argv, u32 timeout) {
 
   static struct itimerval it;
@@ -8060,7 +8060,7 @@ static u8 run_target_by_std(char** argv, u32 timeout) {
 }
 
 
-/* WANG ADD */
+/* AugPersist ADD */
 static u8 run_target_by_net(char** argv, u32 timeout) {
 
   static struct itimerval it;
@@ -8201,7 +8201,7 @@ static u8 run_target_by_net(char** argv, u32 timeout) {
 
 
 
-/* WANG ADD */
+/* AugPersist ADD */
 static u8 run_case_repeatedly(char** argv, struct queue_entry* q, u8* use_mem,
                          u32 handicap, u8 from_queue) {
 
@@ -8223,7 +8223,7 @@ static u8 run_case_repeatedly(char** argv, struct queue_entry* q, u8* use_mem,
 
 
 
-/* WANG ADD */
+/* AugPersist ADD */
 /* Run the same testcase repeatedly for the binary(server). 
 Then find the loop start point for the bianry. */
 static void find_loop_run(char** argv)
@@ -8301,7 +8301,7 @@ int main(int argc, char** argv) {
         out_dir = optarg;
         break;
 
-      /* WANG ADD */
+      /* AugPersist ADD */
       case 'P':
         if (LOOP_mode) FATAL("Multiple -P options not supported");
         LOOP_mode = 1;
@@ -8574,7 +8574,7 @@ int main(int argc, char** argv) {
 
   start_time = get_cur_time();
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (qemu_mode)
     if (LOOP_mode)
       use_argv = get_qemu_loop_argv(argv[0], argv + optind, argc - optind);
@@ -8583,16 +8583,16 @@ int main(int argc, char** argv) {
   else
     use_argv = argv + optind;
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (LOOP_mode) {
     find_loop_run(use_argv);
     exit(0);
   }
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (loop_start_point)
     setenv("LOOP_STAR_POINT", loop_start_point, 1);
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (runtime_mode_buf) {
     setenv("RUNTIME_MODE", runtime_mode_buf, 1);
     if (!strcmp(runtime_mode_buf, "reserve")) {

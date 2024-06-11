@@ -157,7 +157,7 @@ static void afl_setup(void) {
 
   }
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   trace_fd = open("/tmp/loop_trace", O_WRONLY|O_TRUNC);
   if (trace_fd == -1) exit(1);
   run_once = 0;
@@ -229,7 +229,7 @@ static void afl_forkserver(CPUState *cpu) {
 
     afl_wait_tsl(cpu, t_fd[0]);
 
-    /* WANG ADD */
+    /* AugPersist ADD */
     if (!run_once)
     {
       close(trace_fd);
@@ -258,7 +258,7 @@ static inline void afl_maybe_log(abi_ulong cur_loc) {
   if (cur_loc > afl_end_code || cur_loc < afl_start_code || !afl_area_ptr)
     return;
 
-  /* WANG ADD */
+  /* AugPersist ADD */
   if (!run_once)
   {
     // Remove the record of PLT. table address
